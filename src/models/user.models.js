@@ -2,35 +2,41 @@ import mongoose, { Schema } from "mongoose";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 
+const ACCESS_TOKEN_EXPIRY = process.env.ACCESS_TOKEN_EXPIRY || "1h"; // Default to 1 hour
+const REFRESH_TOKEN_EXPIRY = process.env.REFRESH_TOKEN_EXPIRY || "7d"; // Default to 7 days
+
 const userSchema = new Schema(
   {
     userName: {
       type: String,
-      require: true,
+      required: true,
       unique: true,
-      lowerCase: true,
+      lowercase: true,
       trim: true,
       index: true,
+      minlength: [3, "User name must be at least 3 characters long"],
     },
     email: {
       type: String,
-      require: true,
+      required: true,
       unique: true,
-      lowerCase: true,
+      lowercase: true,
       trim: true,
+      match: [/\S+@\S+\.\S+/, "Please use a valid email address"], // Email validation regex
     },
     fullName: {
       type: String,
-      require: true,
+      required: true,
       trim: true,
       index: true,
     },
     avatar: {
-      type: String, // cloudinary url
-      require: true,
+      type: String, // cloudinary URL
+      required: true,
     },
     coverImage: {
-      type: String, // cloudinary url
+      type: String, // cloudinary URL
+      default: "", // Default empty string if no cover image
     },
     watchHistory: [
       {
@@ -38,10 +44,14 @@ const userSchema = new Schema(
         ref: "Video",
       },
     ],
-
     password: {
       type: String,
       required: [true, "Password is required"],
+      minlength: [8, "Password must be at least 8 characters long"],
+      match: [
+        /^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/,
+        "Password must contain at least one letter, one number, and one special character",
+      ],
     },
     refreshToken: {
       type: String,
@@ -50,21 +60,29 @@ const userSchema = new Schema(
   { timestamps: true }
 );
 
-userSchema.pre("save", function (next) {
+// Pre-save middleware to hash password
+userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
 
-  this.password = bcrypt.hash(this.password, 10);
+  this.password = await bcrypt.hash(this.password, 10);
   next();
 });
 
+// Method to compare password
 userSchema.methods.isPasswordCorrect = async function (password) {
-  return await bcrypt.compare(password, this.password);
+  try {
+    return await bcrypt.compare(password, this.password);
+  } catch (error) {
+    throw new Error("Error while comparing password");
+  }
 };
 
+// Method to generate access token
 userSchema.methods.generateAccessToken = function () {
   return jwt.sign(
     {
       _id: this._id,
+      userName: this.userName,
     },
     process.env.ACCESS_TOKEN_SECRET,
     {
@@ -73,6 +91,7 @@ userSchema.methods.generateAccessToken = function () {
   );
 };
 
+// Method to generate refresh token
 userSchema.methods.generateRefreshToken = function () {
   return jwt.sign(
     {
